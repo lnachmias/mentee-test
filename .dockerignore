@@ -1,0 +1,6 @@
+# Allow only the files needed to build the service; exclude Git and credentials.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!hello_world.py

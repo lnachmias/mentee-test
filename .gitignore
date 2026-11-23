@@ -1,2 +1,7 @@
 # Local Codex project instructions and interview context
 /AGENTS.md
+
+# Local Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
