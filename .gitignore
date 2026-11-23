@@ -5,3 +5,16 @@
 __pycache__/
 *.py[cod]
 .venv/
+
+# Terraform caches, state, plans, and local values (commit provider lock files)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+
+# Release artifacts
+/previous-deployment.json
+/release-metadata.json

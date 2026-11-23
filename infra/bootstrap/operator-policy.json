@@ -1,0 +1,54 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadExamBoundary",
+      "Effect": "Allow",
+      "Action": ["iam:GetPolicy", "iam:GetPolicyVersion"],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:policy/candidate-exam-boundary"
+    },
+    {
+      "Sid": "BootstrapStateBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket", "s3:ListBucket", "s3:GetBucket*",
+        "s3:GetEncryptionConfiguration", "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration", "s3:GetAccelerateConfiguration",
+        "s3:PutBucketTagging", "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration", "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketPolicy"
+      ],
+      "Resource": "arn:aws:s3:::exam-mentee-test-state-<ACCOUNT_ID>-eu-west-2"
+    },
+    {
+      "Sid": "BootstrapGitHubOidc",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateOpenIDConnectProvider", "iam:GetOpenIDConnectProvider",
+        "iam:ListOpenIDConnectProviderTags", "iam:TagOpenIDConnectProvider"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+    },
+    {
+      "Sid": "CreateBoundedTerraformRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/exam-github-terraform",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::<ACCOUNT_ID>:policy/candidate-exam-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureTerraformRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole", "iam:UpdateAssumeRolePolicy", "iam:TagRole",
+        "iam:UntagRole", "iam:ListRoleTags", "iam:PutRolePolicy",
+        "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/exam-github-terraform"
+    }
+  ]
+}

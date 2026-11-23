@@ -1,0 +1,73 @@
+<div id="iam-console-route" role="group" aria-label="Illustrated AWS IAM console route: create a policy with JSON, select the policy, and attach it to your existing user.">
+  <style>
+    #iam-console-route { color:var(--foreground); }
+    #iam-console-route .route { display:grid; grid-template-columns:minmax(0,1fr) 44px minmax(0,1fr) 44px minmax(0,1fr); align-items:start; gap:0; }
+    #iam-console-route figure { margin:0; min-width:0; display:grid; gap:calc(var(--font-size-base)*.5); }
+    #iam-console-route .screen { width:100%; height:auto; display:block; }
+    #iam-console-route .face { fill:var(--background); stroke:color-mix(in srgb,var(--foreground) 45%,var(--background)); stroke-width:1; }
+    #iam-console-route .rule { fill:none; stroke:color-mix(in srgb,var(--foreground) 22%,var(--background)); stroke-width:1; }
+    #iam-console-route .soft { fill:color-mix(in srgb,var(--foreground) 6%,var(--background)); }
+    #iam-console-route .highlight { fill:color-mix(in srgb,var(--viz-series-1) 18%,var(--background)); }
+    #iam-console-route .mark { fill:none; stroke:var(--foreground); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+    #iam-console-route .code-label { fill:var(--foreground); font-family:ui-monospace,monospace; }
+    #iam-console-route figcaption { display:grid; gap:calc(var(--font-size-base)*.25); overflow-wrap:anywhere; }
+    #iam-console-route strong { font-weight:500; }
+    #iam-console-route .connector { width:100%; height:150px; display:block; color:var(--muted-foreground); }
+    #iam-console-route .down { display:none; }
+    #iam-console-route .legend { margin-top:calc(var(--font-size-base)*1); }
+    @media(max-width:600px) {
+      #iam-console-route .route { grid-template-columns:minmax(0,1fr); }
+      #iam-console-route figure { grid-template-columns:140px minmax(0,1fr); align-items:center; gap:16px; }
+      #iam-console-route .connector { width:140px; height:36px; }
+      #iam-console-route .across { display:none; }
+      #iam-console-route .down { display:inline; }
+    }
+  </style>
+  <div class="route">
+    <figure>
+      <svg class="screen" viewBox="0 0 220 150" role="img" aria-label="Create policy screen: JSON tab selected, with a code document in the editor and the Next action at the bottom.">
+        <path class="face" d="M5 6H215V143H5Z"/>
+        <path class="soft" d="M6 7H214V28H6Z"/>
+        <path class="rule" d="M15 17H90 M15 38H83 M15 66H205V118H15Z"/>
+        <path class="highlight" d="M99 32H158V57H99Z M160 124H205V136H160Z"/>
+        <text x="128" y="51" text-anchor="middle" class="code-label" font-size="24">JSON</text>
+        <path class="mark" d="M33 78L25 87 33 96 M186 78L194 87 186 96"/>
+        <path class="rule" d="M47 80H123 M47 90H172 M47 100H138 M47 110H99"/>
+      </svg>
+      <figcaption><strong>1. IAM → Policies</strong><span>Create policy → JSON</span><span class="text-small text-muted">Next → name → Create policy</span></figcaption>
+    </figure>
+    <svg class="connector" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+      <defs><marker id="iam-route-head" orient="auto" markerUnits="userSpaceOnUse" refX="8" refY="5" markerWidth="10" markerHeight="10"><path d="M1 1L8 5 1 9" fill="none" stroke="currentColor"/></marker></defs>
+      <line class="across" x1="4" y1="50%" x2="40" y2="50%" marker-end="url(#iam-route-head)"/>
+      <line class="down" x1="70" y1="3" x2="70" y2="32" marker-end="url(#iam-route-head)"/>
+    </svg>
+    <figure>
+      <svg class="screen" viewBox="0 0 220 150" role="img" aria-label="Policies screen: select the policy radio button, then Actions and Attach.">
+        <path class="face" d="M5 6H215V143H5Z"/>
+        <path class="soft" d="M6 7H214V28H6Z"/>
+        <path class="rule" d="M15 17H84 M15 38H143V54H15Z M15 63H205 M15 87H205 M15 111H205 M15 135H205"/>
+        <path class="highlight" d="M15 65H205V86H15Z M151 33H205V56H151Z"/>
+        <circle cx="27" cy="76" r="6" class="mark"/><circle cx="27" cy="76" r="3" fill="var(--foreground)"/>
+        <path class="mark" d="M43 76H179 M189 40L194 46 199 40"/>
+        <path class="rule" d="M43 99H159 M43 123H174"/>
+      </svg>
+      <figcaption><strong>2. Select the policy</strong><span>Actions → Attach</span><span class="text-small text-muted">Repeat for each policy</span></figcaption>
+    </figure>
+    <svg class="connector" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+      <line class="across" x1="4" y1="50%" x2="40" y2="50%" marker-end="url(#iam-route-head)"/>
+      <line class="down" x1="70" y1="3" x2="70" y2="32" marker-end="url(#iam-route-head)"/>
+    </svg>
+    <figure>
+      <svg class="screen" viewBox="0 0 220 150" role="img" aria-label="Attach policy screen: select your existing IAM user and choose Attach policy.">
+        <path class="face" d="M5 6H215V143H5Z"/>
+        <path class="soft" d="M6 7H214V28H6Z"/>
+        <path class="rule" d="M15 17H119 M15 38H205V54H15Z M15 65H205 M15 91H205 M15 116H205"/>
+        <path class="highlight" d="M15 66H205V90H15Z M145 124H205V136H145Z"/>
+        <path class="mark" d="M21 71H34V84H21Z M23 77L27 81 33 73 M46 78H163"/>
+        <path class="rule" d="M21 98H34V110H21Z M46 104H147"/>
+      </svg>
+      <figcaption><strong>3. Your existing IAM user</strong><span>Select user → Attach policy</span><span class="text-small text-muted">Users → your user → Permissions</span></figcaption>
+    </figure>
+  </div>
+  <div class="legend text-small text-muted">Illustrative screens · highlighted fields and actions · existing user, no new role</div>
+</div>

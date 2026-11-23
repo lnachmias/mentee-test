@@ -1,0 +1,55 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageProjectRepository",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:DescribeRepositories",
+        "ecr:PutImageTagMutability",
+        "ecr:GetRepositoryPolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:ListTagsForResource",
+        "ecr:TagResource",
+        "ecr:UntagResource"
+      ],
+      "Resource": "arn:aws:ecr:eu-west-2:<ACCOUNT_ID>:repository/mentee-test",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "CreateAndReadContainerService",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateContainerService",
+        "lightsail:GetContainerServices",
+        "lightsail:GetContainerServicePowers"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureAndTagContainerService",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:UpdateContainerService",
+        "lightsail:TagResource",
+        "lightsail:UntagResource"
+      ],
+      "Resource": "arn:aws:lightsail:eu-west-2:<ACCOUNT_ID>:ContainerService/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    }
+  ]
+}

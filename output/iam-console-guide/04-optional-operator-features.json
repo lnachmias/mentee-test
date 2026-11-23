@@ -1,0 +1,83 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RepositoryScanningRetentionAndCleanup",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:PutImageScanningConfiguration",
+        "ecr:DescribeImageScanFindings",
+        "ecr:StartImageScan",
+        "ecr:GetLifecyclePolicy",
+        "ecr:PutLifecyclePolicy",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:BatchDeleteImage",
+        "ecr:DeleteRepositoryPolicy",
+        "ecr:DeleteRepository"
+      ],
+      "Resource": "arn:aws:ecr:eu-west-2:<ACCOUNT_ID>:repository/mentee-test",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "ContainerMetricsAndCleanup",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:DeleteContainerService"
+      ],
+      "Resource": "arn:aws:lightsail:eu-west-2:<ACCOUNT_ID>:ContainerService/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "ReadContainerMetrics",
+      "Effect": "Allow",
+      "Action": "lightsail:GetContainerServiceMetricData",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "RoleSettingsAndCleanup",
+      "Effect": "Allow",
+      "Action": [
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription",
+        "iam:DeleteRolePolicy",
+        "iam:DeleteRole"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/exam-github-deploy"
+    },
+    {
+      "Sid": "ReapplyOnlyExamBoundary",
+      "Effect": "Allow",
+      "Action": "iam:PutRolePermissionsBoundary",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/exam-github-deploy",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::<ACCOUNT_ID>:policy/candidate-exam-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "OidcChangesAndCleanup",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AddClientIDToOpenIDConnectProvider",
+        "iam:RemoveClientIDFromOpenIDConnectProvider",
+        "iam:UpdateOpenIDConnectProviderThumbprint",
+        "iam:DeleteOpenIDConnectProvider"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
+    }
+  ]
+}
