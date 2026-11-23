@@ -17,6 +17,12 @@ REGION = "eu-west-2"
 SERVICE = "mentee-test"
 REPOSITORY = "mentee-test"
 SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGING_PATHS = (
+    "Dockerfile", ".dockerignore", "requirements.txt", "hello_world.py",
+    ".github/workflows/ship.yml", "scripts/release.py",
+)
+MAX_IMAGE_PATCH = 3
 
 
 def aws(service, operation, *args):
@@ -29,22 +35,52 @@ def next_image_version(tags, app_version):
     if not SEMVER.fullmatch(app_version):
         raise ValueError("APP_VERSION must be Major.Minor.Patch")
     versions = [tuple(map(int, tag.split("."))) for tag in tags if SEMVER.fullmatch(tag)]
-    baseline = tuple(map(int, app_version.split(".")))
+    app_major, app_minor, _ = map(int, app_version.split("."))
+    # App patches and image patches are independent; image patches stay in 0..3.
+    baseline = (app_major, app_minor, 0)
     if versions:
         major, minor, patch = max(versions)
-        baseline = max(baseline, (major, minor, patch + 1))
+        candidate = (major, minor + 1, 0) if patch >= MAX_IMAGE_PATCH else (major, minor, patch + 1)
+        baseline = max(baseline, candidate)
     return ".".join(map(str, baseline))
+
+
+def packaging_revision():
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "HEAD", "--", *PACKAGING_PATHS],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    revision = result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", revision):
+        raise RuntimeError("No packaging commit found; check out the complete Git history")
+    return revision
+
+
+def select_image_version(images, app_version, revision):
+    marker = f"packaging-{revision}"
+    for image in images:
+        tags = image.get("imageTags", [])
+        if marker in tags:
+            versions = [tag for tag in tags if SEMVER.fullmatch(tag)]
+            if len(versions) != 1:
+                raise RuntimeError("The packaging revision must identify exactly one SemVer image tag")
+            return versions[0], False
+    tags = [tag for image in images for tag in image.get("imageTags", [])]
+    return next_image_version(tags, app_version), True
 
 
 def choose_version():
     repository = aws("ecr", "describe-repositories", "--repository-names", REPOSITORY)["repositories"][0]
     images = aws("ecr", "describe-images", "--repository-name", REPOSITORY)["imageDetails"]
-    tags = [tag for image in images for tag in image.get("imageTags", [])]
-    version = next_image_version(tags, APP_VERSION)
+    revision = packaging_revision()
+    version, build_required = select_image_version(images, APP_VERSION, revision)
     values = {
         "app_version": APP_VERSION,
         "image_version": version,
         "image_uri": f"{repository['repositoryUri']}:{version}",
+        "packaging_image_uri": f"{repository['repositoryUri']}:packaging-{revision}",
+        "packaging_commit": revision,
+        "build_required": "true" if build_required else "false",
     }
     output = os.environ.get("GITHUB_OUTPUT")
     if output:

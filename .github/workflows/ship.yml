@@ -78,6 +78,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
@@ -91,12 +92,15 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/exam-github-deploy
           aws-region: eu-west-2
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
-      - name: Choose the next SemVer image version
+      - name: Detect packaging commits and select the image version
         id: version
         run: python scripts/release.py version
       - uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
+        if: steps.version.outputs.build_required == 'true'
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.version.outputs.build_required == 'true'
       - name: Build the release image
+        if: steps.version.outputs.build_required == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -104,7 +108,9 @@ jobs:
           load: true
           push: false
           provenance: false
-          tags: ${{ steps.version.outputs.image_uri }}
+          tags: |
+            ${{ steps.version.outputs.image_uri }}
+            ${{ steps.version.outputs.packaging_image_uri }}
           build-args: IMAGE_VERSION=${{ steps.version.outputs.image_version }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
@@ -112,6 +118,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke-test the built image
+        if: steps.version.outputs.build_required == 'true'
         env:
           IMAGE_URI: ${{ steps.version.outputs.image_uri }}
           IMAGE_VERSION: ${{ steps.version.outputs.image_version }}
@@ -128,12 +135,19 @@ jobs:
             docker logs release-smoke
             docker rm --force release-smoke
           fi
-      - name: Push and deploy the tested image
+      - name: Push the tested image and packaging revision tag
+        if: steps.version.outputs.build_required == 'true'
+        env:
+          IMAGE_URI: ${{ steps.version.outputs.image_uri }}
+          PACKAGING_IMAGE_URI: ${{ steps.version.outputs.packaging_image_uri }}
+        run: |
+          docker push "$IMAGE_URI"
+          docker push "$PACKAGING_IMAGE_URI"
+      - name: Deploy and verify the selected image
         env:
           IMAGE_URI: ${{ steps.version.outputs.image_uri }}
           IMAGE_VERSION: ${{ steps.version.outputs.image_version }}
         run: |
-          docker push "$IMAGE_URI"
           python scripts/release.py deploy --image "$IMAGE_URI" --image-version "$IMAGE_VERSION"
       - name: Save release and rollback metadata
         if: always()

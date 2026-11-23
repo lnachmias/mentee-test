@@ -70,7 +70,8 @@ All work happens on `main`. `.github/workflows/ship.yml` has two jobs:
 2. **Image upload and deployment (manual):** Tests Python, builds a container,
    tests that exact container, uploads it to private ECR, deploys it to Lightsail,
    and verifies the live version when **Build, upload to ECR, and deploy the image
-   to Lightsail** is checked (default: on).
+   to Lightsail** is checked (default: on). If the packaging commit was already
+   published, it reuses that image and skips rebuilding/uploading it.
 
 Open **GitHub Actions -> Ship to Lightsail -> Run workflow**, select `main`, and
 choose which jobs to run. Select both for the first infrastructure/application
@@ -91,9 +92,19 @@ inside each manually started image release; there is no version field to type in
 - **App:** `APP_VERSION` in Python describes the API: patch for compatible fixes,
   minor for compatible features, major for incompatible changes. Update it in the
   source when the app changes; the pipeline cannot infer compatibility from code.
-- **Image:** Start at the app version when ECR has no release tags. Otherwise take
-  the greater of the app version and the highest existing image SemVer plus one
-  patch. This gives every new publication a unique version, including rebuilds.
+- **Image:** Start at the app's major/minor with patch zero (`1.0.0` initially).
+  For a new packaging commit, increment the highest published image patch until
+  `3`. After `1.0.3`, publish `1.1.0`, then `1.1.1`, and so on. A higher app
+  major/minor is the minimum image baseline; app patches remain independent.
+- Detect packaging commits with Git history for `Dockerfile`, `.dockerignore`,
+  `requirements.txt`, `hello_world.py`, `.github/workflows/ship.yml`, and
+  `scripts/release.py`. If the Dockerfile starts copying additional source files,
+  add those paths to `PACKAGING_PATHS` in `scripts/release.py`.
+- ECR stores an immutable `packaging-<commit SHA>` tag alongside the SemVer tag,
+  both pointing to the same image. An already-published packaging commit reuses
+  its original version. README-only, Terraform-only changes, and reruns without
+  packaging commits do not allocate a new version. Multiple pending packaging
+  commits result in one version bump when published together.
 - Use exactly `Major.Minor.Patch` for this exercise. ECR prevents overwriting release
   tags. The Docker build argument, OCI version label, pushed tag, and Python's
   `image_version` all use the same value. The Git commit is recorded separately in
@@ -106,12 +117,15 @@ For example, in release order:
 | First release | `1.0.0` | `1.0.0` |
 | Base-image security fix | `1.0.0` | `1.0.1` |
 | Compatible application bug fix | `1.0.1` | `1.0.2` |
-| Compatible feature | `1.1.0` | `1.1.0` |
+| Dependency security fix | `1.0.1` | `1.0.3` |
+| Next packaging change | `1.0.1` | `1.1.0` |
+| Rerun or documentation-only commit | `1.0.1` | `1.1.0` (reused) |
 | Breaking API change | `2.0.0` | `2.0.0` |
 
 This uses [SemVer compatibility rules](https://semver.org/) for the app and an
-explicit packaging-rebuild policy for image patches. Rollbacks reuse an existing
-image; starting a new build is a new publication, not a rollback.
+explicit image counter with patches capped at three. The image minor rollover is
+a project policy; it does not imply a new application feature. Rollbacks reuse
+an existing image rather than rebuilding it.
 
 ### One-time setup
 

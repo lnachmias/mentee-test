@@ -1,0 +1,154 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageProjectRepository",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:DescribeRepositories",
+        "ecr:PutImageTagMutability",
+        "ecr:GetRepositoryPolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:ListTagsForResource",
+        "ecr:TagResource",
+        "ecr:UntagResource",
+        "ecr:PutImageScanningConfiguration",
+        "ecr:DeleteRepositoryPolicy"
+      ],
+      "Resource": "arn:aws:ecr:eu-west-2:030454160336:repository/mentee-test",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "CreateAndReadContainerService",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:CreateContainerService",
+        "lightsail:GetContainerServices",
+        "lightsail:GetContainerServicePowers"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureAndTagContainerService",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:UpdateContainerService",
+        "lightsail:TagResource",
+        "lightsail:UntagResource"
+      ],
+      "Resource": "arn:aws:lightsail:eu-west-2:030454160336:ContainerService/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "CreateDeploymentRoleWithRequiredBoundary",
+      "Effect": "Allow",
+      "Action": "iam:CreateRole",
+      "Resource": "arn:aws:iam::030454160336:role/exam-github-deploy",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::030454160336:policy/candidate-exam-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "ManageDeploymentRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:ListRoleTags",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:DeleteRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::030454160336:role/exam-github-deploy"
+    },
+    {
+      "Sid": "ManageGitHubOidc",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateOpenIDConnectProvider",
+        "iam:GetOpenIDConnectProvider",
+        "iam:ListOpenIDConnectProviderTags",
+        "iam:TagOpenIDConnectProvider",
+        "iam:UntagOpenIDConnectProvider"
+      ],
+      "Resource": "arn:aws:iam::030454160336:oidc-provider/token.actions.githubusercontent.com"
+    },
+    {
+      "Sid": "DiscoverExistingOidc",
+      "Effect": "Allow",
+      "Action": "iam:ListOpenIDConnectProviders",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadExamBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion"
+      ],
+      "Resource": "arn:aws:iam::030454160336:policy/candidate-exam-boundary"
+    },
+    {
+      "Sid": "ListTerraformState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::exam-mentee-test-state-030454160336-eu-west-2",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "ReadWriteTerraformStateAndLock",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::exam-mentee-test-state-030454160336-eu-west-2/mentee-test/infrastructure.tfstate",
+        "arn:aws:s3:::exam-mentee-test-state-030454160336-eu-west-2/mentee-test/infrastructure.tfstate.tflock"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "ReleaseTerraformStateLock",
+      "Effect": "Allow",
+      "Action": "s3:DeleteObject",
+      "Resource": "arn:aws:s3:::exam-mentee-test-state-030454160336-eu-west-2/mentee-test/infrastructure.tfstate.tflock",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    }
+  ]
+}
