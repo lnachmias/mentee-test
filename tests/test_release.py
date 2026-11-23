@@ -11,30 +11,23 @@ from scripts.check_service import check_service
 
 
 class VersionTests(unittest.TestCase):
-    def test_first_image_starts_at_zero_patch(self):
-        self.assertEqual(release.next_image_version([], "1.0.0"), "1.0.0")
-        self.assertEqual(release.next_image_version([], "1.0.9"), "1.0.0")
+    def test_source_version_is_used_exactly_including_patch(self):
+        self.assertEqual(release.select_image_version([], "1.0.9", "abc"), ("1.0.9", True))
+        self.assertEqual(release.select_image_version([], "2.0.0", "abc"), ("2.0.0", True))
 
-    def test_patch_is_numeric_and_ignores_non_release_tags(self):
-        self.assertEqual(release.next_image_version(["latest", "1.0.1", "1.0.2", "bad"], "1.0.0"), "1.0.3")
+    def test_invalid_versions_are_rejected(self):
+        for version in ("01.0.0", "v1.0.0", "latest", "1.0", "1.0.0; echo bad", "1.0.0\n"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                release.validate_version(version)
 
-    def test_patch_rolls_over_after_three(self):
-        tags = []
-        for expected in ("1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.1.0", "1.1.1"):
-            actual = release.next_image_version(tags, "1.0.0")
-            self.assertEqual(actual, expected)
-            tags.append(actual)
+    def test_new_release_must_exceed_highest_published_version(self):
+        for version in ("1.0.9", "1.0.2"):
+            with self.subTest(version=version), self.assertRaisesRegex(RuntimeError, "highest published"):
+                release.select_image_version([{"imageTags": ["1.0.10", "latest"]}], version, "new")
 
-    def test_old_large_patch_versions_roll_forward(self):
-        self.assertEqual(release.next_image_version(["1.0.9", "1.0.10"], "1.0.0"), "1.1.0")
-
-    def test_versions_never_go_backwards(self):
-        self.assertEqual(release.next_image_version(["1.2.3"], "1.0.0"), "1.3.0")
-        self.assertEqual(release.next_image_version(["1.0.8"], "2.0.0"), "2.0.0")
-
-    def test_invalid_app_version_is_rejected(self):
-        with self.assertRaises(ValueError):
-            release.next_image_version([], "01.0.0")
+    def test_patch_has_no_artificial_cap_or_rollover(self):
+        images = [{"imageTags": ["1.0.3", "packaging-old"]}]
+        self.assertEqual(release.select_image_version(images, "1.0.4", "new"), ("1.0.4", True))
 
 
 class PackagingCommitTests(unittest.TestCase):
@@ -68,25 +61,18 @@ class PackagingCommitTests(unittest.TestCase):
                 self.assertEqual(release.packaging_revision(), git("rev-parse", "HEAD"))
                 self.assertNotEqual(release.packaging_revision(), first)
 
-    def test_existing_packaging_revision_reuses_the_same_version(self):
+    def test_existing_packaging_revision_reuses_the_source_version(self):
         images = [{"imageTags": ["1.0.2", "packaging-abc"]}, {"imageTags": ["1.0.3", "packaging-other"]}]
-        self.assertEqual(release.select_image_version(images, "1.0.0", "abc"), ("1.0.2", False))
+        self.assertEqual(release.select_image_version(images, "1.0.2", "abc"), ("1.0.2", False))
 
-    def test_new_packaging_commit_bumps_the_image(self):
+    def test_packaging_change_without_version_bump_is_rejected(self):
         images = [{"imageTags": ["1.0.2", "packaging-abc"]}]
-        self.assertEqual(release.select_image_version(images, "1.0.0", "new"), ("1.0.3", True))
+        with self.assertRaisesRegex(RuntimeError, "Bump APP_VERSION"):
+            release.select_image_version(images, "1.0.2", "new")
 
-    def test_new_packaging_commit_after_patch_three_increments_minor(self):
-        images = [{"imageTags": ["1.0.3", "packaging-abc"]}]
-        self.assertEqual(release.select_image_version(images, "1.0.0", "new"), ("1.1.0", True))
-
-    def test_existing_images_without_a_marker_get_one_new_release(self):
-        self.assertEqual(release.select_image_version([{"imageTags": ["1.0.1"]}], "1.0.0", "new"), ("1.0.2", True))
-
-    def test_ambiguous_marker_never_selects_a_possibly_incorrect_baked_version(self):
-        images = [{"imageTags": ["1.0.0", "1.0.1", "packaging-abc"]}]
-        with self.assertRaisesRegex(RuntimeError, "exactly one"):
-            release.select_image_version(images, "1.0.0", "abc")
+    def test_existing_images_without_a_marker_cannot_be_overwritten(self):
+        with self.assertRaisesRegex(RuntimeError, "immutable"):
+            release.select_image_version([{"imageTags": ["1.0.1"]}], "1.0.1", "new")
 
 
 class DeploymentTests(unittest.TestCase):
@@ -94,18 +80,17 @@ class DeploymentTests(unittest.TestCase):
     @patch("scripts.release.check_service")
     @patch("scripts.release.wait_for_deployment", return_value="https://example.test/")
     @patch("scripts.release.create_deployment", return_value=2)
+    @patch("scripts.release.resolve_image")
     @patch("scripts.release.aws")
-    def test_release_preserves_rollback_and_verifies_the_requested_deployment(self, aws, create, wait, verify, write):
+    def test_release_preserves_rollback_and_verifies_the_requested_deployment(self, aws, resolve, create, wait, verify, write):
         previous = {
             "version": 1, "state": "ACTIVE", "createdAt": "earlier",
             "containers": {"app": {"image": "repo:1.0.0", "ports": {"8080": "HTTP"}}},
             "publicEndpoint": {"containerName": "app", "containerPort": 8080},
         }
-        aws.side_effect = [
-            {"imageDetails": [{"imageDigest": "sha256:example"}]},
-            {"containerServices": [{"currentDeployment": previous}]},
-        ]
-        release.deploy("repo:1.0.1", "1.0.1")
+        resolve.return_value = {"version": "1.0.1", "image_uri": "repo:1.0.1", "image_digest": "sha256:example"}
+        aws.return_value = {"containerServices": [{"currentDeployment": previous}]}
+        release.deploy("1.0.1")
         config = create.call_args.args[0]
         self.assertEqual(config["publicEndpoint"]["healthCheck"]["path"], "/healthz")
         self.assertEqual(config["publicEndpoint"]["healthCheck"]["successCodes"], "200")
@@ -114,7 +99,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(set(rollback), {"serviceName", "containers", "publicEndpoint"})
         self.assertEqual(rollback["containers"], previous["containers"])
         wait.assert_called_once_with(2, "repo:1.0.1")
-        verify.assert_called_once_with("https://example.test/", "1.0.0", "1.0.1")
+        verify.assert_called_once_with("https://example.test/", "1.0.1")
 
     @patch("scripts.release.time.sleep")
     @patch("scripts.release.aws")
@@ -146,25 +131,96 @@ class DeploymentTests(unittest.TestCase):
 
     @patch("scripts.release.create_deployment")
     @patch("scripts.release.aws")
-    def test_tag_and_baked_version_mismatch_never_deploys(self, aws, create):
+    def test_invalid_version_never_deploys(self, aws, create):
         with self.assertRaises(ValueError):
-            release.deploy("repo:1.0.0", "1.0.1")
+            release.deploy("latest", rollback=True)
         aws.assert_not_called()
         create.assert_not_called()
+
+    @patch("scripts.release.create_deployment")
+    @patch("scripts.release.aws")
+    def test_missing_ecr_image_never_creates_a_deployment(self, aws, create):
+        aws.side_effect = [
+            {"repositories": [{"repositoryUri": "repo", "imageTagMutability": "IMMUTABLE"}]},
+            subprocess.CalledProcessError(254, ["aws"], stderr="ImageNotFoundException"),
+        ]
+        with self.assertRaises(subprocess.CalledProcessError):
+            release.deploy("1.0.0", rollback=True)
+        create.assert_not_called()
+
+    @patch("scripts.release.aws")
+    def test_mutable_repository_is_rejected(self, aws):
+        aws.return_value = {"repositories": [{"repositoryUri": "repo", "imageTagMutability": "MUTABLE"}]}
+        with self.assertRaisesRegex(RuntimeError, "immutable"):
+            release.resolve_image("1.0.0")
+        self.assertEqual(aws.call_count, 1)
+
+    @patch("scripts.release.Path.write_text")
+    @patch("scripts.release.check_service")
+    @patch("scripts.release.wait_for_deployment", return_value="https://example.test/")
+    @patch("scripts.release.create_deployment", return_value=3)
+    @patch("scripts.release.aws")
+    def test_rollback_uses_selected_version_and_preserves_service_configuration(self, aws, create, wait, verify, write):
+        previous = {
+            "version": 2, "state": "ACTIVE",
+            "containers": {
+                "app": {"image": "repo:2.0.0", "ports": {"8080": "HTTP"}, "environment": {"MODE": "demo"}},
+                "sidecar": {"image": "sidecar:stable"},
+            },
+            "publicEndpoint": {"containerName": "app", "containerPort": 8080,
+                               "healthCheck": {"path": "/healthz", "successCodes": "200"}},
+        }
+        aws.side_effect = [
+            {"repositories": [{"repositoryUri": "repo", "imageTagMutability": "IMMUTABLE"}]},
+            {"imageDetails": [{"imageDigest": "sha256:old"}]},
+            {"containerServices": [{"currentDeployment": previous}]},
+        ]
+        # Current source can be newer; verification must use the selected image's version.
+        with patch.object(release, "APP_VERSION", "2.0.0"):
+            release.deploy("1.0.0", rollback=True)
+        config = create.call_args.args[0]
+        self.assertEqual(config["containers"]["app"]["image"], "repo:1.0.0")
+        self.assertEqual(config["containers"]["app"]["environment"], {"MODE": "demo"})
+        self.assertEqual(config["containers"]["sidecar"], previous["containers"]["sidecar"])
+        self.assertEqual(config["publicEndpoint"], previous["publicEndpoint"])
+        self.assertEqual(previous["containers"]["app"]["image"], "repo:2.0.0")
+        metadata = json.loads(write.call_args_list[1].args[0])
+        self.assertEqual(metadata["image_digest"], "sha256:old")
+        self.assertEqual(metadata["version"], "1.0.0")
+        self.assertEqual(metadata["operation"], "rollback")
+        wait.assert_called_once_with(3, "repo:1.0.0")
+        verify.assert_called_once_with("https://example.test/", "1.0.0")
+
+    @patch("scripts.release.Path.write_text")
+    @patch("scripts.release.create_deployment")
+    @patch("scripts.release.resolve_image", return_value={"image_uri": "repo:1.0.0"})
+    @patch("scripts.release.aws")
+    def test_rollback_without_an_active_deployment_is_rejected(self, aws, resolve, create, write):
+        for service in ({}, {"currentDeployment": {"state": "FAILED"}}):
+            aws.return_value = {"containerServices": [service]}
+            with self.assertRaisesRegex(RuntimeError, "active deployment"):
+                release.deploy("1.0.0", rollback=True)
+        create.assert_not_called()
+        write.assert_not_called()
+
+    @patch("scripts.release.time.monotonic", side_effect=[0, 901])
+    def test_deployment_timeout_fails(self, monotonic):
+        with self.assertRaisesRegex(RuntimeError, "did not become active"):
+            release.wait_for_deployment(2, "repo:1.0.1")
 
 
 class VerificationTests(unittest.TestCase):
     @patch("scripts.check_service.urllib.request.urlopen")
-    def test_expected_live_versions_succeed(self, urlopen):
-        versions = {"app_version": "1.0.0", "image_version": "1.0.1"}
+    def test_expected_live_version_succeeds(self, urlopen):
+        versions = {"version": "1.0.1"}
         urlopen.side_effect = [io.BytesIO(b'{"status":"ok"}'), io.BytesIO(json.dumps(versions).encode())]
-        self.assertEqual(check_service("https://example.test", "1.0.0", "1.0.1"), versions)
+        self.assertEqual(check_service("https://example.test", "1.0.1"), versions)
 
     @patch("scripts.check_service.time.sleep")
     @patch("scripts.check_service.time.monotonic", side_effect=[0, 0, 121])
     @patch("scripts.check_service.urllib.request.urlopen")
     def test_healthy_old_version_is_not_a_successful_release(self, urlopen, monotonic, sleep):
         urlopen.side_effect = [io.BytesIO(b'{"status":"ok"}'),
-                               io.BytesIO(b'{"app_version":"1.0.0","image_version":"1.0.0"}')]
-        with self.assertRaisesRegex(RuntimeError, "Unexpected live versions"):
-            check_service("https://example.test", "1.0.0", "1.0.1")
+                               io.BytesIO(b'{"version":"1.0.0"}')]
+        with self.assertRaisesRegex(RuntimeError, "Unexpected live version"):
+            check_service("https://example.test", "1.0.1")

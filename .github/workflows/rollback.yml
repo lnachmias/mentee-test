@@ -1,0 +1,80 @@
+name: Roll back Lightsail
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing ECR release version to restore (for example 1.0.0)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+# Match ship.yml so a rollback cannot race a release or infrastructure apply.
+concurrency:
+  group: production-lightsail
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  AWS_DEFAULT_REGION: eu-west-2
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  # Pass user input as data, never as an interpolated shell command.
+  TARGET_VERSION: ${{ inputs.version }}
+
+jobs:
+  rollback:
+    name: Restore an existing image and verify it
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Validate configuration and selected version
+        run: |
+          test -n "$AWS_ACCOUNT_ID" || { echo "Set repository variable AWS_ACCOUNT_ID"; exit 1; }
+          python -c 'import os; from scripts.release import validate_version; validate_version(os.environ["TARGET_VERSION"])'
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/exam-github-deploy
+          aws-region: eu-west-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+      - name: Resolve the existing immutable ECR image
+        id: image
+        run: python scripts/release.py image --version "$TARGET_VERSION"
+      - uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
+      - name: Pull and smoke-test the selected image
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+        run: |
+          docker pull "$IMAGE_URI"
+          docker run --detach --name rollback-smoke --publish 127.0.0.1:8080:8080 \
+            --read-only --cap-drop=ALL --security-opt=no-new-privileges "$IMAGE_URI"
+          python scripts/check_service.py --url http://127.0.0.1:8080 \
+            --version "$TARGET_VERSION" --timeout 60
+      - name: Remove smoke-test container
+        if: always()
+        run: |
+          if docker container inspect rollback-smoke >/dev/null 2>&1; then
+            docker logs rollback-smoke
+            docker rm --force rollback-smoke
+          fi
+      - name: Redeploy the selected image and verify the live version
+        run: python scripts/release.py rollback --version "$TARGET_VERSION"
+      - name: Save rollback metadata and the replaced deployment
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rollback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release-metadata.json
+            previous-deployment.json
+          if-no-files-found: ignore
+          retention-days: 14

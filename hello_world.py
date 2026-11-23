@@ -1,24 +1,15 @@
 """Print release information, or serve it over HTTP with Gunicorn."""
 
 import json
-from pathlib import Path
 
 
 APP_VERSION = "1.0.0"
-# Written by Docker at build time; a local Python run has no image version.
-_image_version_file = Path(__file__).with_name("IMAGE_VERSION")
-IMAGE_VERSION = (
-    _image_version_file.read_text(encoding="utf-8").strip()
-    if _image_version_file.exists()
-    else "local"
-)
 
 
 def version_info():
     return {
         "message": "Hello, world!",
-        "app_version": APP_VERSION,
-        "image_version": IMAGE_VERSION,
+        "version": APP_VERSION,
     }
 
 

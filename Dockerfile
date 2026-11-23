@@ -15,13 +15,12 @@ RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r
 
 COPY hello_world.py ./
 
-# CI must use the same SemVer value for this argument and the pushed image tag.
-ARG IMAGE_VERSION=1.0.0
-RUN python -c 'import re, sys; assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", sys.argv[1]), "IMAGE_VERSION must be Major.Minor.Patch"' "$IMAGE_VERSION" \
-    && printf '%s\n' "$IMAGE_VERSION" > IMAGE_VERSION
+# The source is authoritative. Fail the build if the supplied tag disagrees.
+ARG VERSION
+RUN python -c 'import re, sys; from hello_world import APP_VERSION; assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", APP_VERSION), "APP_VERSION must be Major.Minor.Patch"; assert sys.argv[1] == APP_VERSION, "VERSION must match APP_VERSION in hello_world.py"' "$VERSION"
 
 LABEL org.opencontainers.image.title="mentee-test" \
-    org.opencontainers.image.version="${IMAGE_VERSION}"
+    org.opencontainers.image.version="${VERSION}"
 
 # Application files remain root-owned; the runtime user can only read them.
 USER 10001:10001

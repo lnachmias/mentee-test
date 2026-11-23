@@ -1,6 +1,8 @@
 # mentee-test
 
-A small Python service that reports independent app and container image versions.
+A small Python service with one SemVer version shared by the app and container image.
+Terraform, release, and rollback workflows are prepared for review. AWS infrastructure
+has not been applied and no live deployment is claimed.
 
 Print the version locally (Python 3.13, no dependencies required):
 
@@ -8,13 +10,14 @@ Print the version locally (Python 3.13, no dependencies required):
 python3 hello_world.py
 ```
 
-Without a built image, `image_version` is `local`. The app version is `1.0.0`.
+Local Python and the container report the same version, initially `1.0.0`.
 
 Build and run the container:
 
 ```sh
-docker build --build-arg IMAGE_VERSION=1.0.0 -t mentee-test:1.0.0 .
-docker run --rm --name mentee-test -p 8080:8080 --read-only --cap-drop=ALL --security-opt=no-new-privileges mentee-test:1.0.0
+VERSION=$(python3 -c 'from hello_world import APP_VERSION; print(APP_VERSION)')
+docker build --build-arg VERSION="$VERSION" -t "mentee-test:$VERSION" .
+docker run --rm --name mentee-test -p 8080:8080 --read-only --cap-drop=ALL --security-opt=no-new-privileges "mentee-test:$VERSION"
 ```
 
 In another terminal, inspect the live version and health:
@@ -27,7 +30,7 @@ curl http://localhost:8080/healthz
 `/` and `/version` return:
 
 ```json
-{"message": "Hello, world!", "app_version": "1.0.0", "image_version": "1.0.0"}
+{"message": "Hello, world!", "version": "1.0.0"}
 ```
 
 `/healthz` returns `{"status": "ok"}`. The service listens on port 8080 and
@@ -41,16 +44,46 @@ python3 -m venv .venv
 
 ## Versioning
 
-- **App version:** `APP_VERSION` in `hello_world.py`, initially `1.0.0`.
-- **Image version:** an independent `Major.Minor.Patch` value passed as
-  `IMAGE_VERSION` during the Docker build. It is baked into `/app/IMAGE_VERSION`
-  and the OCI image version label. Python reads the baked file.
-- A container cannot automatically discover the registry tag it was pulled with.
-  The release pipeline must use the same value for the build argument and image tag,
-  and publish immutable tags. Adding another tag does not change the baked version.
-- For example, a base image security fix can keep app `1.0.0` and produce image
-  `1.0.1`. Update the pinned base digest, rebuild with `IMAGE_VERSION=1.0.1`,
-  and publish the image as `mentee-test:1.0.1`.
+**Change `APP_VERSION` in [`hello_world.py`](hello_world.py#L6), line 6.** This is the
+only version to edit. For a major release, change:
+
+```python
+APP_VERSION = "1.0.0"
+```
+
+to:
+
+```python
+APP_VERSION = "2.0.0"
+```
+
+The pipeline reads this value and uses it for the ECR tag and Docker `VERSION`
+build argument. Docker checks it against the source and writes the OCI image
+version label. `/version` and `python hello_world.py` report the source value.
+A mismatch fails the build; there is no independent image version or counter.
+A container does not discover its registry tag at runtime: the same source version
+is included in the image and used as its immutable publication tag.
+
+Developers choose the bump using [SemVer](https://semver.org/):
+
+| Change | App and image version |
+| --- | --- |
+| Initial release | `1.0.0` |
+| Compatible bug fix, dependency fix, or pinned base-image security update | `1.0.1` |
+| Compatible new feature | `1.1.0` |
+| Incompatible API change | `2.0.0` |
+
+For a base-image fix without application logic changes, update the pinned digest
+in `Dockerfile` **and bump `APP_VERSION`**, typically a patch. This project versions
+the whole deliverable, including its dependencies. The pipeline validates the
+chosen version; it cannot infer API compatibility. Patches have no artificial cap:
+`1.0.3` can become `1.0.4`. Commit the version bump with the change.
+
+The release job refuses to overwrite an existing version with different packaging,
+and a new release must exceed the highest published version. ECR uses immutable
+tags. Reruns and documentation-only commits reuse an image when both the source
+version and its packaging revision match. The separate rollback workflow can
+explicitly deploy an older published version without changing the source version.
 
 ## Container choices
 
@@ -85,47 +118,20 @@ so manual-only releases do not yet satisfy that requirement. To meet it later, a
 the `push` trigger for `main` and allow the image job to run on pushes as well as
 when its manual checkbox is selected. Terraform can remain manual.
 
-Infrastructure and releases share a concurrency group and running deployments are
-not cancelled by a later workflow run. Version selection happens automatically
-inside each manually started image release; there is no version field to type in.
+Infrastructure, release, and rollback workflows share the `production-lightsail`
+concurrency group, so a running deployment is not cancelled or overlapped by
+another operation. GitHub retains at most one pending run in this group; a newer
+request can replace a pending request. Inspect the Actions queue when scheduling
+multiple operations.
 
-- **App:** `APP_VERSION` in Python describes the API: patch for compatible fixes,
-  minor for compatible features, major for incompatible changes. Update it in the
-  source when the app changes; the pipeline cannot infer compatibility from code.
-- **Image:** Start at the app's major/minor with patch zero (`1.0.0` initially).
-  For a new packaging commit, increment the highest published image patch until
-  `3`. After `1.0.3`, publish `1.1.0`, then `1.1.1`, and so on. A higher app
-  major/minor is the minimum image baseline; app patches remain independent.
-- Detect packaging commits with Git history for `Dockerfile`, `.dockerignore`,
-  `requirements.txt`, `hello_world.py`, `.github/workflows/ship.yml`, and
-  `scripts/release.py`. If the Dockerfile starts copying additional source files,
-  add those paths to `PACKAGING_PATHS` in `scripts/release.py`.
-- ECR stores an immutable `packaging-<commit SHA>` tag alongside the SemVer tag,
-  both pointing to the same image. An already-published packaging commit reuses
-  its original version. README-only, Terraform-only changes, and reruns without
-  packaging commits do not allocate a new version. Multiple pending packaging
-  commits result in one version bump when published together.
-- Use exactly `Major.Minor.Patch` for this exercise. ECR prevents overwriting release
-  tags. The Docker build argument, OCI version label, pushed tag, and Python's
-  `image_version` all use the same value. The Git commit is recorded separately in
-  the OCI revision label and the image digest in release metadata.
-
-For example, in release order:
-
-| Change | App version | Image version |
-| --- | --- | --- |
-| First release | `1.0.0` | `1.0.0` |
-| Base-image security fix | `1.0.0` | `1.0.1` |
-| Compatible application bug fix | `1.0.1` | `1.0.2` |
-| Dependency security fix | `1.0.1` | `1.0.3` |
-| Next packaging change | `1.0.1` | `1.1.0` |
-| Rerun or documentation-only commit | `1.0.1` | `1.1.0` (reused) |
-| Breaking API change | `2.0.0` | `2.0.0` |
-
-This uses [SemVer compatibility rules](https://semver.org/) for the app and an
-explicit image counter with patches capped at three. The image minor rollover is
-a project policy; it does not imply a new application feature. Rollbacks reuse
-an existing image rather than rebuilding it.
+Release identity is checked using Git history for `Dockerfile`, `.dockerignore`,
+`requirements.txt`, `hello_world.py`, `.github/workflows/ship.yml`,
+`scripts/release.py`, and `scripts/check_service.py`. If the Dockerfile starts
+copying additional source files, add them to `PACKAGING_PATHS` in
+`scripts/release.py`. ECR stores an immutable `packaging-<commit SHA>` alias on
+the same image as the SemVer tag. This identifies reruns without creating another
+version; the Git commit is also recorded in the OCI revision label. The digest is
+saved in deployment metadata. Keep both ECR tags for images needed for rollback.
 
 ### One-time setup
 
@@ -180,24 +186,51 @@ Terraform protects the state bucket, ECR repository, and Lightsail service from
 accidental destruction. Changing `lightsail_power` or `lightsail_scale` in
 `infra/variables.tf` and manually running Terraform adjusts capacity.
 
-### Verification and rollback
+### Verification and rollback (Stage 4)
 
-The workflow waits for the requested Lightsail deployment version to become
-`ACTIVE`, checks that it uses the expected image, and verifies both versions
-through HTTPS. A healthy old deployment is not accepted as a successful release.
-The run summary shows the service URL, app version, image version, and image digest.
+The release workflow waits for the **requested Lightsail deployment number** to
+become `ACTIVE`, confirms the image reference, and checks `/healthz` and the shared
+`version` through HTTPS. A healthy old deployment does not count as a successful
+release. Failed unit tests, builds, or container smoke tests stop publication and
+deployment. The run summary records the URL, app/image version, and ECR digest.
 
-The workflow saves `release-metadata.json` and, when available,
-`previous-deployment.json` as run artifacts for 14 days. For a manual rollback,
-download the previous configuration and run:
+To restore a specific previously published image:
+
+1. Open **GitHub Actions -> Roll back Lightsail -> Run workflow**.
+2. Select **main**, enter an existing ECR SemVer in **version**, such as `1.0.0`,
+   and run the workflow. Find retained versions under **ECR -> mentee-test -> Images**
+   or in previous release run summaries. Select the last known-good version to
+   return to the previous release.
+3. The workflow validates the input, requires an immutable ECR repository, resolves
+   the tag and digest, pulls that exact image, and smoke-tests its reported version.
+   Missing tags, invalid versions, or failed smoke tests stop before deployment.
+4. It saves the current deployment, changes the app image in its existing container
+   configuration, and creates a Lightsail deployment. It keeps the current ports,
+   environment, other containers, and public endpoint settings. It waits for the
+   requested deployment to become active and verifies the selected version over HTTPS.
+
+ECR stores images; [Lightsail deploys the selected ECR image](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-container-service-ecr-private-repo-access.html).
+Rollback never builds, pushes, overwrites a tag, or changes `APP_VERSION` on `main`.
+Verification uses the **selected rollback version**, independently of current source.
+Both workflows use the existing `exam-github-deploy` OIDC role and repository
+variable `AWS_ACCOUNT_ID`; rollback does not need Terraform state access.
+
+Each deployment run saves `release-metadata.json` (selected version, URI, digest,
+and operation) and, when present, `previous-deployment.json` as artifacts for 14 days.
+Images remain in ECR without an expiry policy, so a version rollback is independent
+of artifact retention. There must already be an active service deployment to roll
+back. This is an image rollback: it does not restore old infrastructure/configuration
+or reverse database migrations. This service is stateless. Automatic rollback after
+a failed release is a future improvement; the manual workflow reports failures.
+
+To run the same rollback helper from a configured operator shell:
 
 ```sh
-aws lightsail create-container-service-deployment \
-  --region eu-west-2 --cli-input-json file://previous-deployment.json
+python3 scripts/release.py rollback --version 1.0.0
 ```
 
-Wait for it to become active and inspect `/version`. The ECR images are retained;
-rollback reuses an existing image. Automatic rollback is a future improvement.
+The workflow adds a container smoke test before calling this helper. No AWS
+resources are needed to review these files or run the mocked tests below.
 
 ### Local checks
 

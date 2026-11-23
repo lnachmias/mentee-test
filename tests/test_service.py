@@ -1,7 +1,6 @@
 import io
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,7 +35,8 @@ class ServiceTests(unittest.TestCase):
             with self.subTest(path=path):
                 response = request(path)
                 self.assertEqual(response["status"], "200 OK")
-                self.assertEqual(json.loads(response["body"])["app_version"], "1.0.0")
+                self.assertEqual(json.loads(response["body"]),
+                                 {"message": "Hello, world!", "version": hello_world.APP_VERSION})
                 self.assertEqual(response["headers"]["Cache-Control"], "no-store")
 
     def test_health_and_http_errors(self):
@@ -47,12 +47,11 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(request("/version", "HEAD")["headers"]["Content-Length"],
                          request("/version")["headers"]["Content-Length"])
 
-    def test_baked_image_can_change_without_app_version_change(self):
+    def test_source_version_is_the_only_version_in_local_and_container_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
-            shutil.copy(hello_world.__file__, target / "hello_world.py")
-            (target / "IMAGE_VERSION").write_text("1.0.1\n")
+            source = Path(hello_world.__file__).read_text()
+            source = source.replace(f'APP_VERSION = "{hello_world.APP_VERSION}"', 'APP_VERSION = "2.0.0"')
+            (target / "hello_world.py").write_text(source)
             output = subprocess.check_output([sys.executable, str(target / "hello_world.py")], text=True)
-            versions = json.loads(output)
-            self.assertEqual(versions["app_version"], "1.0.0")
-            self.assertEqual(versions["image_version"], "1.0.1")
+            self.assertEqual(json.loads(output), {"message": "Hello, world!", "version": "2.0.0"})

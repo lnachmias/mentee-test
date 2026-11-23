@@ -1,6 +1,7 @@
 """Release helpers using the AWS CLI; no AWS SDK dependency is required."""
 
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
@@ -20,9 +21,8 @@ SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGING_PATHS = (
     "Dockerfile", ".dockerignore", "requirements.txt", "hello_world.py",
-    ".github/workflows/ship.yml", "scripts/release.py",
+    ".github/workflows/ship.yml", "scripts/release.py", "scripts/check_service.py",
 )
-MAX_IMAGE_PATCH = 3
 
 
 def aws(service, operation, *args):
@@ -31,18 +31,10 @@ def aws(service, operation, *args):
     return json.loads(result.stdout) if result.stdout.strip() else {}
 
 
-def next_image_version(tags, app_version):
-    if not SEMVER.fullmatch(app_version):
-        raise ValueError("APP_VERSION must be Major.Minor.Patch")
-    versions = [tuple(map(int, tag.split("."))) for tag in tags if SEMVER.fullmatch(tag)]
-    app_major, app_minor, _ = map(int, app_version.split("."))
-    # App patches and image patches are independent; image patches stay in 0..3.
-    baseline = (app_major, app_minor, 0)
-    if versions:
-        major, minor, patch = max(versions)
-        candidate = (major, minor + 1, 0) if patch >= MAX_IMAGE_PATCH else (major, minor, patch + 1)
-        baseline = max(baseline, candidate)
-    return ".".join(map(str, baseline))
+def validate_version(version):
+    if not SEMVER.fullmatch(version):
+        raise ValueError("Version must be Major.Minor.Patch (for example 1.0.1)")
+    return tuple(map(int, version.split(".")))
 
 
 def packaging_revision():
@@ -57,37 +49,62 @@ def packaging_revision():
 
 
 def select_image_version(images, app_version, revision):
+    requested = validate_version(app_version)
     marker = f"packaging-{revision}"
     for image in images:
         tags = image.get("imageTags", [])
-        if marker in tags:
-            versions = [tag for tag in tags if SEMVER.fullmatch(tag)]
-            if len(versions) != 1:
-                raise RuntimeError("The packaging revision must identify exactly one SemVer image tag")
-            return versions[0], False
+        if app_version in tags:
+            if marker not in tags:
+                raise RuntimeError("Version is already published for different packaging. "
+                                   "Bump APP_VERSION in hello_world.py; existing tags are immutable.")
+            return app_version, False
     tags = [tag for image in images for tag in image.get("imageTags", [])]
-    return next_image_version(tags, app_version), True
+    published = [validate_version(tag) for tag in tags if SEMVER.fullmatch(tag)]
+    if published and requested <= max(published):
+        raise RuntimeError("A new release must exceed the highest published version. "
+                           "Bump APP_VERSION in hello_world.py, or use the rollback workflow.")
+    return app_version, True
 
 
-def choose_version():
+def repository_info():
     repository = aws("ecr", "describe-repositories", "--repository-names", REPOSITORY)["repositories"][0]
-    images = aws("ecr", "describe-images", "--repository-name", REPOSITORY)["imageDetails"]
-    revision = packaging_revision()
-    version, build_required = select_image_version(images, APP_VERSION, revision)
-    values = {
-        "app_version": APP_VERSION,
-        "image_version": version,
-        "image_uri": f"{repository['repositoryUri']}:{version}",
-        "packaging_image_uri": f"{repository['repositoryUri']}:packaging-{revision}",
-        "packaging_commit": revision,
-        "build_required": "true" if build_required else "false",
-    }
+    if repository.get("imageTagMutability") != "IMMUTABLE":
+        raise RuntimeError("ECR must use immutable tags for reliable releases and rollback")
+    return repository
+
+
+def write_outputs(values):
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as handle:
             for key, value in values.items():
                 handle.write(f"{key}={value}\n")
     print(json.dumps(values))
+
+
+def choose_version():
+    repository = repository_info()
+    images = aws("ecr", "describe-images", "--repository-name", REPOSITORY)["imageDetails"]
+    revision = packaging_revision()
+    version, build_required = select_image_version(images, APP_VERSION, revision)
+    values = {
+        "version": version,
+        "image_uri": f"{repository['repositoryUri']}:{version}",
+        "packaging_image_uri": f"{repository['repositoryUri']}:packaging-{revision}",
+        "packaging_commit": revision,
+        "build_required": "true" if build_required else "false",
+    }
+    write_outputs(values)
+
+
+def resolve_image(version):
+    """Resolve an existing immutable tag, independently of the checked-out version."""
+    validate_version(version)
+    repository = repository_info()
+    detail = aws("ecr", "describe-images", "--repository-name", REPOSITORY,
+                 "--image-ids", f"imageTag={version}")["imageDetails"][0]
+    return {"version": version, "image_uri": f"{repository['repositoryUri']}:{version}",
+            "image_digest": detail["imageDigest"]}
 
 
 def wait_for_deployment(version, image, timeout=900):
@@ -115,15 +132,15 @@ def create_deployment(config):
     return deployment["version"]
 
 
-def deploy(image, image_version):
+def deploy(version, rollback=False):
     # Immutable ECR tags are used because Lightsail documents this URI format.
     # Record the resolved digest separately for traceability and rollback audits.
-    if not SEMVER.fullmatch(image_version) or not image.endswith(":" + image_version):
-        raise ValueError("The image URI tag must match IMAGE_VERSION")
-    detail = aws("ecr", "describe-images", "--repository-name", REPOSITORY,
-                 "--image-ids", f"imageTag={image_version}")["imageDetails"][0]
+    metadata = resolve_image(version)
+    image = metadata["image_uri"]
     service = aws("lightsail", "get-container-services", "--service-name", SERVICE)["containerServices"][0]
     previous = service.get("currentDeployment")
+    if rollback and (not previous or previous.get("state") != "ACTIVE"):
+        raise RuntimeError("Rollback requires an active deployment whose configuration can be reused")
     if previous:
         previous_config = {
             "serviceName": SERVICE,
@@ -141,32 +158,42 @@ def deploy(image, image_version):
                             "timeoutSeconds": 5, "healthyThreshold": 2, "unhealthyThreshold": 3},
         },
     }
-    metadata = {"app_version": APP_VERSION, "image_version": image_version,
-                "image_uri": image, "image_digest": detail["imageDigest"]}
+    if rollback:
+        # Retain ports, environment, sidecars, and health settings; change only the app image.
+        config = copy.deepcopy(previous_config)
+        config["containers"]["app"]["image"] = image
+    metadata["operation"] = "rollback" if rollback else "release"
     Path("release-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    version = create_deployment(config)
-    url = wait_for_deployment(version, image)
-    check_service(url, APP_VERSION, image_version)
+    deployment_version = create_deployment(config)
+    url = wait_for_deployment(deployment_version, image)
+    check_service(url, version)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:
-            handle.write(f"Live service: {url}\n\nApp: `{APP_VERSION}` · Image: `{image_version}`\n\n"
-                         f"Digest: `{detail['imageDigest']}`\n")
+            handle.write(f"Live service: {url}\n\nApp/image version: `{version}`\n\n"
+                         f"Digest: `{metadata['image_digest']}`\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version")
-    deploy_parser = commands.add_parser("deploy")
-    deploy_parser.add_argument("--image", required=True)
-    deploy_parser.add_argument("--image-version", required=True)
+    for command in ("image", "deploy", "rollback"):
+        command_parser = commands.add_parser(command)
+        command_parser.add_argument("--version", required=True)
     args = parser.parse_args()
     try:
         if args.command == "version":
             choose_version()
+        elif args.command == "image":
+            write_outputs(resolve_image(args.version))
         else:
-            deploy(args.image, args.image_version)
+            if args.command == "deploy" and args.version != APP_VERSION:
+                raise ValueError("Release version must match APP_VERSION; use rollback for an older image")
+            deploy(args.version, rollback=args.command == "rollback")
     except subprocess.CalledProcessError as error:
         print(error.stderr, file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
         sys.exit(1)
